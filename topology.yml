@@ -9,7 +9,7 @@ name: return-to-libc-tp
 hosts:
   - name: seed
     base_box:
-      image: seed-ubuntu-20.04
+      image: seed
       mgmt_user: ubuntu
     flavor: standard.small
 
