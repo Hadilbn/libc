@@ -1,0 +1,12 @@
+Lab content: SEED Labs - Return-to-libc Attack Lab
+Copyright (c) 2006-2020 by Wenliang Du.
+Licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+International License (CC BY-NC-SA 4.0). See LICENSE-SEED-Labs.md.
+https://www.handsonsecurity.net
+
+Repository structure (topology.yml, variables.yml, provisioning/, training.json
+scaffolding) adapted from cyberrangecz/library-junior-hacker and the
+library-clickjacking-cupcakes scenario built on top of it.
+
+Code in this repository (Ansible roles, verifier script, JSON structure): MIT,
+see LICENSE. Non-commercial teaching use only for the lab content itself.

@@ -1,0 +1,27 @@
+---
+# TP Return-to-libc (SEED Labs) sur CyberRangeCZ.
+# Les variables flag_t* viennent de variables.yml (générées par la plateforme,
+# une valeur aléatoire différente par sandbox / par étudiant).
+
+- name: Configuration de base des hôtes
+  hosts: hosts
+  become: yes
+  roles:
+    - hosts
+
+- name: Configurer le poste étudiant (VM seed)
+  hosts: seed
+  become: true
+  roles:
+    - role: user-access
+      user_access_username: seed
+      user_access_password: dees
+      user_access_sudo: False
+    - role: seed
+      r2l_flags:
+        "1": "{{ flag_t1_addrs }}"
+        "2": "{{ flag_t2_envaddr }}"
+        "3": "{{ flag_t3_shell }}"
+        "4": "{{ flag_t4_bypass }}"
+        "5": "{{ flag_t5_rop }}"
+    - role: chrony

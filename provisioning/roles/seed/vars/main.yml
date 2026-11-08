@@ -1,0 +1,3 @@
+r2l_secrets:
+  lab: "{{ r2l_lab }}"
+  flags: "{{ r2l_flags }}"

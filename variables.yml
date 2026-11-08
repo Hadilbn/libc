@@ -1,0 +1,26 @@
+# APG variables: https://docs.platform.cyberrange.cz/user-guide-advanced/sandboxes/apg-variables/
+# Une valeur aléatoire par variable est générée PAR SANDBOX (= par étudiant).
+# Ce sont les flags des niveaux "training" (variant answers). Le playbook les
+# écrit dans un fichier root-only sur la VM de l'étudiant ; ils ne sont
+# révélés par `sudo r2llab-verify <n>` que lorsque le travail de l'étudiant
+# pour la tâche correspondante est réellement correct.
+
+flag_t1_addrs:
+    type: password
+    length: 16
+
+flag_t2_envaddr:
+    type: password
+    length: 16
+
+flag_t3_shell:
+    type: password
+    length: 16
+
+flag_t4_bypass:
+    type: password
+    length: 16
+
+flag_t5_rop:
+    type: password
+    length: 16

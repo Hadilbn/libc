@@ -1,0 +1,41 @@
+name: return-to-libc-tp
+
+# Un seul hôte "seed" (comme library-clickjacking-cupcakes) : l'étudiant
+# compile/exploite localement sur cette machine, pas de serveur distant.
+# !! Vérifiez "image" et "mgmt_user" auprès de votre administrateur : lors
+# d'un essai précédent sur ce cloud, une image nommée exactement "seed"
+# a été utilisée en pratique par OpenStack pour un hôte SEED, mais la VM
+# n'a alors pas atteint l'état ACTIVE (voir le dépannage dans README.md).
+hosts:
+  - name: seed
+    base_box:
+      image: seed-ubuntu-20.04
+      mgmt_user: ubuntu
+    flavor: standard.small
+
+routers:
+  - name: router
+    base_box:
+      image: debian-12-x86_64
+      mgmt_user: debian
+    flavor: standard.small
+
+wan:
+  name: internet-connection
+  cidr: 100.100.100.0/24
+
+networks:
+  - name: seed-switch
+    cidr: 10.1.27.0/24
+
+net_mappings:
+  - host: seed
+    network: seed-switch
+    ip: 10.1.27.10
+
+router_mappings:
+  - router: router
+    network: seed-switch
+    ip: 10.1.27.1
+
+groups: []

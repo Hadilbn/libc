@@ -1,0 +1,166 @@
+---
+# --- Paquets nécessaires au lab Return-to-libc (SEED Labs, 32 bits) ---
+- name: Install build & exploitation toolchain
+  apt:
+    name:
+      - build-essential
+      - gcc-multilib
+      - libc6-dev-i386
+      - gdb
+      - python3
+      - zsh
+      - git
+    state: present
+    update_cache: yes
+
+- name: Clone PEDA (gdb-peda) for a friendlier gdb prompt
+  git:
+    repo: https://github.com/longld/peda.git
+    dest: "/home/{{ r2l_user }}/peda"
+  become_user: "{{ r2l_user }}"
+
+- name: Enable PEDA in .gdbinit
+  lineinfile:
+    path: "/home/{{ r2l_user }}/.gdbinit"
+    create: yes
+    owner: "{{ r2l_user }}"
+    line: "source /home/{{ r2l_user }}/peda/peda.py"
+
+# --- Déploiement des sources du lab ---
+- name: Create lab directory
+  file:
+    path: "{{ r2l_lab }}"
+    state: directory
+    owner: "{{ r2l_user }}"
+    mode: '0755'
+
+- name: Copy lab source files
+  copy:
+    src: "{{ item }}"
+    dest: "{{ r2l_lab }}/{{ item }}"
+    owner: "{{ r2l_user }}"
+    mode: '0644'
+  loop:
+    - retlib.c
+    - prtenv.c
+    - Makefile
+    - gdb_command.txt
+    - exploit_task3_skeleton.py
+    - exploit_task4_skeleton.py
+
+- name: Make exploit skeletons executable
+  file:
+    path: "{{ r2l_lab }}/{{ item }}"
+    mode: '0744'
+  loop:
+    - exploit_task3_skeleton.py
+    - exploit_task4_skeleton.py
+
+# --- Compilation + configuration Set-UID root (section 2.3 du sujet SEED) ---
+- name: Build retlib and prtenv
+  command: "make BUF_SIZE={{ r2l_buf_size }} all"
+  args:
+    chdir: "{{ r2l_lab }}"
+
+- name: Make retlib a root-owned Set-UID binary
+  file:
+    path: "{{ r2l_lab }}/retlib"
+    owner: root
+    group: root
+    mode: '4755'
+
+- name: prtenv belongs to the student
+  file:
+    path: "{{ r2l_lab }}/prtenv"
+    owner: "{{ r2l_user }}"
+    mode: '0755'
+
+- name: badfile is writable by the student
+  file:
+    path: "{{ r2l_lab }}/badfile"
+    owner: "{{ r2l_user }}"
+    mode: '0644'
+
+# --- Désactivation des contre-mesures (section 2.2 du sujet) ---
+- name: Disable ASLR persistently
+  sysctl:
+    name: kernel.randomize_va_space
+    value: '0'
+    sysctl_set: yes
+    state: present
+    reload: yes
+
+- name: Link /bin/sh to zsh (dash drops Set-UID privilege, cf. 2.2)
+  file:
+    src: /bin/zsh
+    dest: /bin/sh
+    state: link
+    force: yes
+
+- name: Note for the student about where exploits should be run
+  copy:
+    content: |
+      Dossier de travail : {{ r2l_lab }}
+      Binaire cible (Set-UID root) : {{ r2l_lab }}/retlib
+      Outil d'inspection d'adresse env : {{ r2l_lab }}/prtenv
+      Squelettes d'exploit : exploit_task3_skeleton.py, exploit_task4_skeleton.py
+      Verification de vos taches : sudo r2llab-verify <1-5>
+    dest: "{{ r2l_lab }}/README_LAB.txt"
+    owner: "{{ r2l_user }}"
+    mode: '0644'
+
+# ---- flags personnels + vérificateur -----------------------------------------
+- name: Create the root-only directory for the flags
+  file:
+    path: /opt/r2llab
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Store the personal flags of this sandbox (root-only)
+  copy:
+    dest: /opt/r2llab/secrets.json
+    content: "{{ r2l_secrets | to_nice_json }}"
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Install the verifier tool
+  copy:
+    src: r2llab-verify
+    dest: /usr/local/bin/r2llab-verify
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Let the student run ONLY the verifier as root
+  copy:
+    dest: /etc/sudoers.d/r2llab-verify
+    content: "{{ r2l_user }} ALL=(root) NOPASSWD: /usr/local/bin/r2llab-verify\n"
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
+- name: Add convenience alias to .bashrc
+  blockinfile:
+    path: "/home/{{ r2l_user }}/.bashrc"
+    create: yes
+    owner: "{{ r2l_user }}"
+    group: "{{ r2l_user }}"
+    marker: "# {mark} R2LLAB ALIASES"
+    block: |
+      alias r2llab-verify='sudo /usr/local/bin/r2llab-verify'
+
+# IMPORTANT: le binaire retlib est déjà Set-UID root et lisible par l'étudiant,
+# donc contrairement au lab clickjacking, retirer "seed" du groupe sudo général
+# ne protège pas la confidentialité d'un flag dérivé des adresses mémoire - mais
+# ça évite que l'étudiant lise /opt/r2llab/secrets.json directement.
+- name: Remove the student from the sudo group (flags must stay unreadable directly)
+  command: "gpasswd -d {{ r2l_user }} sudo"
+  register: r2l_gpasswd
+  changed_when: "'Removing' in r2l_gpasswd.stdout"
+  failed_when: false
+  when: r2l_restrict_sudo | bool

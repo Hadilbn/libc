@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""
+r2llab-verify - vérifie votre travail sur le TP Return-to-libc et affiche VOTRE flag personnel.
+
+Usage:  sudo r2llab-verify <tache>        (tache = 1, 2, 3, 4 ou 5)
+        sudo r2llab-verify list
+
+Les flags sont générés par sandbox par CyberRangeCZ : le flag d'un camarade ne vous
+sert à rien. Cet outil exécute votre binaire retlib avec votre badfile, et inspecte
+ce qui se passe réellement (privilèges obtenus, sortie du programme) ; il ne modifie
+jamais vos fichiers.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+SECRETS = "/opt/r2llab/secrets.json"
+
+TITLES = {
+    1: "Tache 1 - Adresses de system() et exit()",
+    2: "Tache 2 - Adresse de la variable d'environnement",
+    3: "Tache 3 - Lancer l'attaque et obtenir un shell root",
+    4: "Tache 4 - Contourner la contre-mesure du shell (dash)",
+    5: "Tache 5 (bonus) - Return-Oriented Programming",
+}
+
+
+def read(path):
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def run_retlib(lab, stdin_text="id\nexit\n", timeout=6):
+    """Lance ./retlib dans lab/ avec le badfile de l'étudiant, lui envoie stdin_text
+    (par ex. 'id\\nexit\\n' pour tester le shell obtenu), et renvoie (rc, stdout)."""
+    retlib = os.path.join(lab, "retlib")
+    try:
+        proc = subprocess.run(
+            [retlib], cwd=lab, input=stdin_text, capture_output=True,
+            text=True, timeout=timeout,
+        )
+        return proc.returncode, proc.stdout + proc.stderr
+    except subprocess.TimeoutExpired as exc:
+        out = (exc.stdout or "") + (exc.stderr or "")
+        return -1, out if isinstance(out, str) else ""
+    except Exception as exc:  # noqa
+        return -2, "Erreur en lancant retlib: %s" % exc
+
+
+def got_root(output):
+    return re.search(r"\buid=0\b", output) is not None
+
+
+def parse_addr_file(path):
+    """Lit un fichier 'cle=0xHEX' par ligne et renvoie un dict {cle: int}."""
+    out = {}
+    if not os.path.isfile(path):
+        return out
+    for line in read(path).splitlines():
+        m = re.match(r"\s*(\w+)\s*=\s*(0x[0-9a-fA-F]+)", line)
+        if m:
+            out[m.group(1).lower()] = int(m.group(2), 16)
+    return out
+
+
+def gdb_real_addrs(lab):
+    """Rejoue gdb en mode batch pour obtenir les VRAIES adresses de system()/exit()
+    sur cette machine (ASLR désactivée => reproductible)."""
+    cmd = [
+        "gdb", "-q", "-batch",
+        "-ex", "break main", "-ex", "run",
+        "-ex", "p system", "-ex", "p exit",
+        os.path.join(lab, "retlib"),
+    ]
+    try:
+        proc = subprocess.run(cmd, cwd=lab, capture_output=True, text=True, timeout=15)
+        out = proc.stdout + proc.stderr
+    except Exception as exc:  # noqa
+        return {}, "gdb n'a pas pu s'exécuter (%s)" % exc
+    addrs = {}
+    lines = [l for l in out.splitlines() if l.startswith("$")]
+    m1 = re.search(r"(0x[0-9a-fA-F]+)\s*<system>", out)
+    m2 = re.search(r"(0x[0-9a-fA-F]+)\s*<exit>", out)
+    if m1:
+        addrs["system"] = int(m1.group(1), 16)
+    if m2:
+        addrs["exit"] = int(m2.group(1), 16)
+    return addrs, out
+
+
+# --------------------------------------------------------------------------- checks
+def check_task1(lab):
+    res = []
+    real, raw = gdb_real_addrs(lab)
+    res.append((bool(real.get("system")) and bool(real.get("exit")),
+                "gdb a pu extraire les adresses de system() et exit() sur cette machine"))
+    answer_file = os.path.join(lab, "task1_answer.txt")
+    res.append((os.path.isfile(answer_file),
+                "task1_answer.txt existe (format: system=0x..., puis exit=0x... sur deux lignes)"))
+    given = parse_addr_file(answer_file)
+    ok_sys = bool(real.get("system")) and given.get("system") == real.get("system")
+    ok_exit = bool(real.get("exit")) and given.get("exit") == real.get("exit")
+    res.append((ok_sys, "l'adresse de system() dans task1_answer.txt correspond à la valeur réelle"))
+    res.append((ok_exit, "l'adresse de exit() dans task1_answer.txt correspond à la valeur réelle"))
+    return res
+
+
+def check_task2(lab):
+    res = []
+    answer_file = os.path.join(lab, "task2_answer.txt")
+    res.append((os.path.isfile(answer_file), "task2_answer.txt existe (une adresse hexadécimale, ex: 0xffffd123)"))
+    if os.path.isfile(answer_file):
+        content = read(answer_file).strip()
+        res.append((re.match(r"^0x[0-9a-fA-F]+$", content) is not None,
+                    "le contenu est bien une adresse au format 0x... (hexadécimal)"))
+    else:
+        res.append((False, "le contenu est bien une adresse au format 0x... (hexadécimal)"))
+    res.append((True, "Note: l'exactitude de l'adresse elle-meme sera confirmee indirectement "
+                       "par la reussite de la Tache 3 (qui en depend)."))
+    return res
+
+
+def check_task3(lab):
+    res = []
+    badfile = os.path.join(lab, "badfile")
+    res.append((os.path.isfile(badfile) and os.path.getsize(badfile) > 0, "badfile existe et n'est pas vide"))
+    rc, out = run_retlib(lab)
+    res.append((got_root(out), "l'exécution de retlib avec votre badfile donne un shell avec uid=0 (root)"))
+    return res
+
+
+def check_task4(lab):
+    res = []
+    try:
+        link = os.readlink("/bin/sh")
+    except OSError:
+        link = "?"
+    res.append(("dash" in link, "/bin/sh pointe vers dash (sudo ln -sf /bin/dash /bin/sh), condition de la Tache 4"))
+    rc, out = run_retlib(lab)
+    res.append((got_root(out),
+                "l'exécution de retlib avec votre badfile donne uid=0 MEME avec /bin/sh=dash "
+                "(preuve que vous contournez bien system(), pas seulement un ancien résultat de la Tache 3)"))
+    return res
+
+
+def check_task5(lab):
+    res = []
+    rc, out = run_retlib(lab)
+    n = len(re.findall(r"Function foo\(\) is invoked \d+ times", out))
+    res.append((n == 10, "foo() a été invoquée exactement 10 fois (trouvé: %d)" % n))
+    res.append((got_root(out), "un shell root (uid=0) est bien obtenu après les 10 appels à foo()"))
+    return res
+
+
+CHECKS = {1: check_task1, 2: check_task2, 3: check_task3, 4: check_task4, 5: check_task5}
+
+
+def main(argv):
+    if len(argv) != 2 or argv[1] == "list" or not argv[1].isdigit() or int(argv[1]) not in CHECKS:
+        print(__doc__)
+        for n in sorted(TITLES):
+            print("  %d  %s" % (n, TITLES[n]))
+        return 0 if len(argv) == 2 and argv[1] == "list" else 2
+    task = int(argv[1])
+    if os.geteuid() != 0:
+        print("Lancez plutot:  sudo r2llab-verify %d" % task)
+        return 2
+    try:
+        cfg = json.loads(read(SECRETS))
+        lab = cfg["lab"]
+        flag = cfg["flags"][str(task)]
+    except Exception as exc:  # noqa
+        print("Erreur interne: impossible de lire le magasin de flags (%s). Prévenez votre enseignant." % exc)
+        return 3
+
+    print("\n== %s ==\n" % TITLES[task])
+    results = CHECKS[task](lab)
+    all_ok = True
+    for ok, msg in results:
+        print("  [%s] %s" % (" OK " if ok else "FAIL", msg))
+        all_ok = all_ok and ok
+    print()
+    if not all_ok:
+        print("Pas encore validé - corrigez les lignes FAIL ci-dessus et relancez l'outil.")
+        return 1
+    bar = "=" * (len(flag) + 14)
+    print(bar)
+    print("  TACHE %d VALIDEE" % task)
+    print("  Votre flag:  %s" % flag)
+    print(bar)
+    print("Copiez-le EXACTEMENT dans la case de réponse de CyberRangeCZ. Valable pour votre sandbox uniquement.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

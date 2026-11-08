@@ -1,0 +1,5 @@
+r2l_user: seed
+r2l_lab: "/home/{{ r2l_user }}/lab"
+r2l_restrict_sudo: true
+r2l_buf_size: 24
+r2l_flags: {}
