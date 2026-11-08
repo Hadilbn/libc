@@ -18,7 +18,7 @@ routers:
     base_box:
       image: debian-12-x86_64
       mgmt_user: debian
-    flavor: m1.medium
+    flavor: standard.small
 
 wan:
   name: internet-connection
